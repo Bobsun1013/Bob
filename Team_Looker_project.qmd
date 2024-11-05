@@ -1,0 +1,188 @@
+---
+title: "Looker Project"
+subtitle: "MKTG - LEE"
+execute:
+  echo: true
+  eval: true
+format:
+  html:
+    code-fold: false
+    self-contained: true
+jupyter: python3
+---
+
+# Chinonso Morsindi, Keyur Patel, Peiyuan Sun, Tobias Jahn, Weiye Chen
+
+# Executive Summary
+The goal of this project is to analyze the customer data from the Looker E-commerce dataset to develop a marketing campaign strategy that targets high-value customer segments. This analysis will incorporate multiple advanced marketing analytics techniques, including customer segmentation, and RFM analysis.
+
+# Introduction & Data Set Used
+The dataset used in this project is the publicly available Looker E-commerce dataset hosted on Google Cloud's BigQuery public data marketplace. The dataset contains detailed information on transactions, customer demographics, and more.
+
+```{python}
+
+import polars as pl
+import plotly.express as px
+from sklearn.pipeline import Pipeline
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+import numpy as np
+import pandas as pd
+
+```
+
+```{python}
+
+pandas_df = pd.read_csv("/workspaces/mktg_codespace/dataset.csv")
+data = pl.from_pandas(pandas_df)
+
+```
+
+```{python}
+
+# Select relevant features for clustering
+selected_features = data.select([
+    'age',
+    'user_gender',
+    'user_state',
+    'user_traffic_source',
+    'order_status',
+    'num_of_item',
+    'sale_price'
+])
+
+```
+
+```{python}
+
+# Ensure columns are categorical and then convert to Int32
+selected_features = selected_features.with_columns([
+    pl.col('user_gender').cast(pl.Categorical),
+    pl.col('user_state').cast(pl.Categorical),
+    pl.col('user_traffic_source').cast(pl.Categorical),
+    pl.col('order_status').cast(pl.Categorical),
+])
+
+selected_features = selected_features.with_columns([
+    pl.col('user_gender').cast(pl.UInt32),
+    pl.col('user_state').cast(pl.UInt32),
+    pl.col('user_traffic_source').cast(pl.UInt32),
+    pl.col('order_status').cast(pl.UInt32)
+])
+
+```
+
+```{python}
+
+# Remove rows with any missing values
+cleaned_features = selected_features.drop_nulls()
+
+# Convert Polars DataFrame to NumPy array for processing
+cleaned_features_np = cleaned_features.to_numpy()
+
+# Scale the data
+scaler = StandardScaler()
+scaled_features = scaler.fit_transform(cleaned_features_np)
+
+# Determine the optimal number of clusters using the elbow method
+def calculate_totwithinss(data, k):
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    kmeans.fit(data)
+    return kmeans.inertia_
+
+k_values = range(1, 10)
+totwithinss_values = [calculate_totwithinss(scaled_features, k) for k in k_values]
+
+```
+
+```{python}
+
+# Plot the elbow method using Plotly Express
+elbow_plot = px.line(
+    x=k_values,
+    y=totwithinss_values,
+    markers=True,
+    labels={'x': 'Number of Clusters', 'y': 'Total Within SS'},
+    title='Elbow Method for Optimal k'
+)
+elbow_plot.show()
+
+```
+
+```{python}
+
+# Looking at the elbow chart, the optimal number of clusters seems to be 5
+optimal_k = 5
+
+# Run K-means clustering
+kmeans = KMeans(n_clusters=optimal_k, random_state=42)
+clusters = kmeans.fit_predict(scaled_features)
+
+# Add cluster assignments to the original data
+data_with_clusters = cleaned_features.with_columns(
+    pl.Series("segment_number", clusters + 1).cast(pl.Utf8).cast(pl.Categorical)
+)
+
+```
+
+```{python}
+
+# Analyze segments
+segment_summary = data_with_clusters.group_by('segment_number').agg([
+    pl.mean('age').alias('mean_age'),
+    pl.mean('sale_price').alias('mean_sale_price'),
+    pl.max('user_state').alias('most_ordered_from'),
+    pl.len().alias('n')
+])
+
+print(segment_summary)
+
+```
+
+# Segment Analysis
+
+- **Segment 1:**
+  - Bases:
+Mean Age: 39.25 years,
+Mean Sale Price: $59.26
+  - Descriptor Variables:
+Most Ordered From: Region with code 80 (suggesting a geographic preference or regional characteristic),
+Count (n): 2,199 customers
+  - Description: This segment represents younger customers with moderately priced purchases, possibly preferring a specific location for orders.
+
+- **Segment 2:**
+  - Bases:
+Mean Age: 42.17 years,
+Mean Sale Price: $51.52
+  - Descriptor Variables:
+Most Ordered From: Region with code 78,
+Count (n): 1,300 customers
+  - Description: This segment includes middle-aged customers who tend to make slightly lower-priced purchases. Their buying behavior is likely influenced by the region indicated by code 78.
+
+- **Segment 3:**
+  - Bases:
+Mean Age: 42.48 years,
+Mean Sale Price: $486.45
+  - Descriptor Variables:
+Most Ordered From: Region with code 76,
+Count (n): 120 customers
+  - Description: This segment represents a smaller group of middle-aged customers making significantly higher-value purchases. This could indicate a premium segment with a strong regional preference.
+
+- **Segment 4:**
+  - Bases:
+Mean Age: 43.49 years,
+Mean Sale Price: $52.45
+  - Descriptor Variables:
+Most Ordered From: Region with code 84,
+Count (n): 3,397 customers
+  - Description: The largest segment, consisting of slightly older customers who prefer lower-priced items, possibly showing a preference for practical or economical purchasing behavior in region 84.
+
+- **Segment 5:**
+  - Bases:
+Mean Age: 39.69 years,
+Mean Sale Price: $56.57
+  - Descriptor Variables:
+Most Ordered From: Region with code 85,
+Count (n): 2,272 customers
+  - Description: This segment represents younger customers who lean towards mid-range purchases, showing a preference for ordering from region 85.
